@@ -2,8 +2,11 @@
   "name": "netlify-functions",
   "version": "0.0.1",
   "dependencies": {
+    "postmark": "^4.0.5",
     "sanitize-html": "^2.14.0",
-    "validator": "^13.12.0",
-    "postmark": "^4.0.5"
+    "validator": "^13.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1"
   }
 }
