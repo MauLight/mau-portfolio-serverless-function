@@ -1,6 +1,11 @@
 import sanitizeHtml from 'sanitize-html'
 import validator from 'validator'
 import postmark from 'postmark'
+import axios from 'axios'
+import qs from 'qs'
+
+const secret = process.env.GCAPTCHA_SECRET
+const hostname = 'maulight.com'
 
 export const handler = async (event, context) => {
 
@@ -25,7 +30,7 @@ export const handler = async (event, context) => {
 
     //* This regex will catch potential malicious scripts in the body.
     const maliciousJsRegex = /(<script\b[^>]*>[\s\S]*?<\/script>|javascript\s*:|on\w+\s*=|eval\s*\(|document\.(cookie|write|location)|window\.(location|open)|fetch\s*\(|XMLHttpRequest\s*\()/i
-    const { name, email, message } = JSON.parse(event.body || '{}')
+    const { name, email, message, token } = JSON.parse(event.body || '{}')
 
     if (!name || !email || !message) {
         return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'You must provide name, email and message.' }) }
@@ -44,12 +49,29 @@ export const handler = async (event, context) => {
         const safeEmail = sanitizeHtml(email.trim())
         const safeMessage = sanitizeHtml(message.trim())
 
-        const client = new postmark.ServerClient(process.env.POSTMARK as string)
-        const response = await client.sendEmail({
-            From: 'mauluz@symetria.lat',
-            To: 'mauluz@symetria.lat',
-            Subject: 'Mau, you have a new message!',
-            HtmlBody: `<div>
+        const postData = qs.stringify({ secret, response: token })
+        const { data } = await axios.post('https://www.google.com/recaptcha/api/siteverify', postData, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        })
+
+        if (data.success) {
+
+            if (data.hostname !== hostname) {
+                console.error(`Invalid hostname: expected ${hostname} but got ${data.hostname}`)
+                return {
+                    statusCode: 401,
+                    headers: corsHeaders,
+                    body: JSON.stringify({ error: 'Request came from an unauthorized domain.' })
+                }
+            }
+
+
+            const client = new postmark.ServerClient(process.env.POSTMARK as string)
+            await client.sendEmail({
+                From: 'mauluz@symetria.lat',
+                To: 'mauluz@symetria.lat',
+                Subject: 'Mau, you have a new message!',
+                HtmlBody: `<div>
         <strong>This one comes from</strong> ${safeName}.
         <br>
         <p>This is their email: ${safeEmail}</p>
@@ -58,12 +80,23 @@ export const handler = async (event, context) => {
         <br>
         <p>If you have any questions, feel free to contact us at <a href="mailto:support@symetria.lat">support@symetria.lat</a></p>
       </div>`,
-            TextBody: 'Mau, you have a new message!',
-            MessageStream: 'outbound'
-        })
+                TextBody: 'Mau, you have a new message!',
+                MessageStream: 'outbound'
+            })
 
-        console.log(response)
-        return { statusCode: 201, headers: corsHeaders, body: JSON.stringify({ message: 'Email sent successfully.' }) }
+            return { statusCode: 201, headers: corsHeaders, body: JSON.stringify({ message: 'Email sent successfully.' }) }
+
+        } else {
+            if (data['error-codes'] && data['error-codes'].length > 0) {
+                console.error(`Recaptcha errors: ${data['error-codes']}`)
+            }
+            return {
+                statusCode: 401,
+                headers: corsHeaders,
+                body: JSON.stringify({ error: 'Recaptcha verification failed.' })
+            }
+        }
+
     } catch (error) {
         console.error(error)
         return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: 'Error sending email.' }) }
